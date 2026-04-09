@@ -1,7 +1,9 @@
+import io
 import streamlit as st
 import pandas as pd
 from datetime import date
 from openai import OpenAI
+from docx import Document
 
 # =========================================================
 # App Config
@@ -20,7 +22,7 @@ REPORT_TYPES = {
             {
                 "id": "cover_page",
                 "title": "Cover Page",
-                "purpose": "Capture title page details such as report title, product, strength, ANDA number, reporting period, company details, confidentiality statement, approval date, report status, and date of report."
+                "purpose": "Capture title page details such as report title, product, strength, NDA/ANDA number, reporting period, company details, confidentiality statement, approval date, report status, and date of report."
             },
             {
                 "id": "approval_page",
@@ -58,7 +60,6 @@ REPORT_TYPES = {
     "DSUR": {"sections": []}
 }
 
-
 # =========================================================
 # Helpers
 # =========================================================
@@ -82,9 +83,6 @@ def generate_ai_draft(
     interval_start,
     interval_end,
 ) -> str:
-    """
-    Generic AI draft generator for most sections.
-    """
     client = get_openai_client()
     if client is None:
         return "ERROR: OPENAI_API_KEY not found in Streamlit secrets."
@@ -140,9 +138,6 @@ def generate_introduction_draft(
     instructions_text: str,
     report_context_text: str
 ) -> str:
-    """
-    Specialized AI draft generator for Section 1 Introduction.
-    """
     client = get_openai_client()
     if client is None:
         return "ERROR: OPENAI_API_KEY not found in Streamlit secrets."
@@ -192,9 +187,6 @@ Drafting Instructions:
 
 
 def read_uploaded_table(uploaded_file):
-    """
-    Read CSV/XLSX and return DataFrame.
-    """
     if uploaded_file is None:
         return None
 
@@ -208,19 +200,14 @@ def read_uploaded_table(uploaded_file):
 
 
 def detect_column(df: pd.DataFrame, candidates: list[str]):
-    """
-    Very basic column detector using case-insensitive exact/contains matching.
-    """
     cols = list(df.columns)
     lower_map = {str(c).strip().lower(): c for c in cols}
 
-    # exact match
     for cand in candidates:
         cand_l = cand.strip().lower()
         if cand_l in lower_map:
             return lower_map[cand_l]
 
-    # contains match
     for cand in candidates:
         cand_l = cand.strip().lower()
         for c in cols:
@@ -231,10 +218,6 @@ def detect_column(df: pd.DataFrame, candidates: list[str]):
 
 
 def summarize_line_listing(df: pd.DataFrame) -> str:
-    """
-    Create a simple structured summary from uploaded line listing.
-    This is MVP logic, not final production logic.
-    """
     if df is None or df.empty:
         return "No line listing data available."
 
@@ -260,26 +243,22 @@ def summarize_line_listing(df: pd.DataFrame) -> str:
     summary_lines.append(f"- Country: {country_col}")
     summary_lines.append(f"- Submission Date: {submission_date_col}")
 
-    # Expedited / 15-day alerts
     expedited_count = None
     if expedited_col:
         expedited_count = df[df[expedited_col].astype(str).str.lower().isin(["yes", "y", "true", "1", "expedited"])].shape[0]
     elif report_type_col:
         expedited_count = df[df[report_type_col].astype(str).str.lower().str.contains("15|alert|expedited", na=False)].shape[0]
 
-    # Follow-up
     followup_count = None
     if followup_col:
         followup_count = df[df[followup_col].astype(str).str.lower().isin(["yes", "y", "true", "1", "follow-up", "follow up"])].shape[0]
     elif report_type_col:
         followup_count = df[df[report_type_col].astype(str).str.lower().str.contains("follow", na=False)].shape[0]
 
-    # Serious
     serious_count = None
     if seriousness_col:
         serious_count = df[df[seriousness_col].astype(str).str.lower().str.contains("serious|yes|y|true", na=False)].shape[0]
 
-    # Non-expedited
     non_expedited_count = None
     if expedited_count is not None:
         non_expedited_count = len(df) - expedited_count
@@ -325,9 +304,6 @@ def generate_section2_draft(
     interval_start,
     interval_end
 ) -> str:
-    """
-    Specialized AI draft generator for Section 2.
-    """
     client = get_openai_client()
     if client is None:
         return "ERROR: OPENAI_API_KEY not found in Streamlit secrets."
@@ -374,6 +350,98 @@ Medical / Regulatory Notes:
         return f"ERROR: {str(e)}"
 
 
+def generate_cover_page_text(
+    product_name: str,
+    dosage_strength: str,
+    nda_anda_number: str,
+    company_name: str,
+    interval_start,
+    interval_end,
+    approval_date,
+    report_status: str,
+    report_date,
+    confidentiality_statement: str,
+    company_address: str
+) -> str:
+    lines = [
+        "ANNUAL ADVERSE DRUG EXPERIENCE REPORT",
+        f"({interval_start} to {interval_end})",
+        f"{product_name}, {dosage_strength}; NDA/ANDA No. {nda_anda_number}",
+        "",
+        f"{company_name}",
+        company_address,
+        "",
+        "Periodic Adverse Drug Experience Report",
+        "A report for the United States Food and Drug Administration",
+        "",
+        f"Approval Date: {approval_date}",
+        f"Review Period: {interval_start} to {interval_end}",
+        f"Report Status: {report_status}",
+        f"Date of Report: {report_date}",
+        "",
+        confidentiality_statement
+    ]
+    return "\n".join(lines)
+
+
+def generate_approval_page_text(
+    product_name: str,
+    interval_start,
+    interval_end,
+    author_name: str,
+    author_designation: str,
+    medical_reviewer_name: str,
+    medical_reviewer_designation: str,
+    reviewer_name: str,
+    reviewer_designation: str,
+    approver_name: str,
+    approver_designation: str,
+    company_name: str
+) -> str:
+    lines = [
+        f"Product: {product_name}",
+        f"Reporting Interval: {interval_start} to {interval_end}",
+        "",
+        "Author:",
+        f"Name: {author_name}",
+        f"Designation: {author_designation}",
+        f"For: {company_name}",
+        "Signature: ____________________",
+        "Date: ____________________",
+        "",
+        "Medical Reviewer:",
+        f"Name: {medical_reviewer_name}",
+        f"Designation: {medical_reviewer_designation}",
+        f"For: {company_name}",
+        "Signature: ____________________",
+        "Date: ____________________",
+        "",
+        "Reviewed by:",
+        f"Name: {reviewer_name}",
+        f"Designation: {reviewer_designation}",
+        f"For: {company_name}",
+        "Signature: ____________________",
+        "Date: ____________________",
+        "",
+        "Approved by:",
+        f"Name: {approver_name}",
+        f"Designation: {approver_designation}",
+        f"For: {company_name}",
+        "Signature: ____________________",
+        "Date: ____________________",
+    ]
+    return "\n".join(lines)
+
+
+def generate_toc_text(sections: list[dict]) -> str:
+    toc_lines = []
+    for section in sections:
+        if section["id"] == "cover_page":
+            continue
+        toc_lines.append(section["title"])
+    return "\n".join(toc_lines)
+
+
 def assemble_full_report(
     product_name: str,
     interval_start,
@@ -381,9 +449,6 @@ def assemble_full_report(
     report_owner: str,
     sections: list[dict]
 ) -> str:
-    """
-    Assemble section drafts into a single full report text.
-    """
     report_parts = []
 
     report_parts.append("ANNUAL ADVERSE DRUG EXPERIENCE REPORT")
@@ -406,6 +471,35 @@ def assemble_full_report(
 
     return "\n".join(report_parts)
 
+
+def export_report_to_word(full_report_text: str) -> bytes:
+    doc = Document()
+    lines = full_report_text.splitlines()
+
+    for line in lines:
+        stripped = line.strip()
+
+        if not stripped:
+            doc.add_paragraph("")
+        elif stripped == "ANNUAL ADVERSE DRUG EXPERIENCE REPORT":
+            doc.add_heading(stripped, level=0)
+        elif stripped in [
+            "Cover Page",
+            "Approval Page",
+            "Table of Contents",
+            "1. Introduction",
+            "2. Summary of Submitted 15-Day Alerts, New Adverse Drug Experiences and New Adverse Drug Experience Follow-up",
+            "3. Actions Taken Since Last Periodic Adverse Drug Experience Report",
+            "4. Conclusion",
+        ]:
+            doc.add_heading(stripped, level=1)
+        else:
+            doc.add_paragraph(line)
+
+    bio = io.BytesIO()
+    doc.save(bio)
+    bio.seek(0)
+    return bio.getvalue()
 
 # =========================================================
 # Main UI
@@ -436,6 +530,7 @@ if report_type == "PADER":
         approval_date = st.date_input("Approval Date", value=date.today())
         company_name = st.text_input("Company Name")
         dosage_strength = st.text_input("Dosage Form / Strength")
+        company_address = st.text_area("Company Address", height=100)
 
     with col2:
         interval_start = st.date_input("Reporting Interval Start Date", value=date.today())
@@ -444,6 +539,14 @@ if report_type == "PADER":
         region = st.selectbox("Region", ["US", "EU", "UK", "Global"])
         template_version = st.text_input("Template Version", value="v1.0")
         report_owner = st.text_input("Report Owner")
+        report_status = st.selectbox("Report Status", ["Annual", "Quarterly"])
+
+    report_date = st.date_input("Date of Report", value=date.today())
+    confidentiality_statement = st.text_area(
+        "Confidentiality Statement",
+        value="This document is a confidential communication. Acceptance of this document constitutes an agreement by the recipient that no unpublished information contained herein will be published or disclosed without prior written approval.",
+        height=100
+    )
 
     st.subheader("Report Setup Summary")
     st.write(f"**Product Name:** {product_name}")
@@ -457,6 +560,25 @@ if report_type == "PADER":
     st.write(f"**Region:** {region}")
     st.write(f"**Template Version:** {template_version}")
     st.write(f"**Report Owner:** {report_owner}")
+    st.write(f"**Report Status:** {report_status}")
+    st.write(f"**Date of Report:** {report_date}")
+
+    # -----------------------------------------------------
+    # Approval workflow fields
+    # -----------------------------------------------------
+    st.header("Approval Workflow Details")
+
+    a1, a2 = st.columns(2)
+    with a1:
+        author_name = st.text_input("Author Name")
+        author_designation = st.text_input("Author Designation")
+        medical_reviewer_name = st.text_input("Medical Reviewer Name")
+        medical_reviewer_designation = st.text_input("Medical Reviewer Designation")
+    with a2:
+        reviewer_name = st.text_input("Reviewer Name")
+        reviewer_designation = st.text_input("Reviewer Designation")
+        approver_name = st.text_input("Approver Name")
+        approver_designation = st.text_input("Approver Designation")
 
     # -----------------------------------------------------
     # Step 3: PADER Sections
@@ -469,10 +591,66 @@ if report_type == "PADER":
         with st.expander(section["title"]):
             st.write(f"**Purpose:** {section['purpose']}")
 
-            # =============================================
-            # Section 1: Introduction - custom workflow
-            # =============================================
-            if section["id"] == "introduction":
+            # Cover Page
+            if section["id"] == "cover_page":
+                if st.button("Generate Cover Page", key="btn_cover_page"):
+                    st.session_state["draft_cover_page"] = generate_cover_page_text(
+                        product_name=product_name,
+                        dosage_strength=dosage_strength,
+                        nda_anda_number=nda_anda_number,
+                        company_name=company_name,
+                        interval_start=interval_start,
+                        interval_end=interval_end,
+                        approval_date=approval_date,
+                        report_status=report_status,
+                        report_date=report_date,
+                        confidentiality_statement=confidentiality_statement,
+                        company_address=company_address
+                    )
+
+                st.text_area(
+                    "Draft Output for Cover Page",
+                    key="draft_cover_page",
+                    height=280
+                )
+
+            # Approval Page
+            elif section["id"] == "approval_page":
+                if st.button("Generate Approval Page", key="btn_approval_page"):
+                    st.session_state["draft_approval_page"] = generate_approval_page_text(
+                        product_name=product_name,
+                        interval_start=interval_start,
+                        interval_end=interval_end,
+                        author_name=author_name,
+                        author_designation=author_designation,
+                        medical_reviewer_name=medical_reviewer_name,
+                        medical_reviewer_designation=medical_reviewer_designation,
+                        reviewer_name=reviewer_name,
+                        reviewer_designation=reviewer_designation,
+                        approver_name=approver_name,
+                        approver_designation=approver_designation,
+                        company_name=company_name
+                    )
+
+                st.text_area(
+                    "Draft Output for Approval Page",
+                    key="draft_approval_page",
+                    height=320
+                )
+
+            # TOC
+            elif section["id"] == "table_of_contents":
+                if st.button("Generate Table of Contents", key="btn_table_of_contents"):
+                    st.session_state["draft_table_of_contents"] = generate_toc_text(pader_sections)
+
+                st.text_area(
+                    "Draft Output for Table of Contents",
+                    key="draft_table_of_contents",
+                    height=220
+                )
+
+            # Introduction
+            elif section["id"] == "introduction":
                 st.subheader("Current Report Context")
 
                 intro_context = f"""
@@ -484,7 +662,7 @@ Dosage Form / Strength: {dosage_strength}
 Reporting Interval Start: {interval_start}
 Reporting Interval End: {interval_end}
 Region: {region}
-Report Status: Annual
+Report Status: {report_status}
 """
 
                 st.text_area(
@@ -542,9 +720,7 @@ Report Status: Annual
                     height=260
                 )
 
-            # =============================================
-            # Section 2: Summary... - custom workflow
-            # =============================================
+            # Section 2
             elif section["id"] == "summary_alerts_new_ades_followup":
                 st.subheader("Upload PADER Line Listing")
 
@@ -623,9 +799,7 @@ Report Status: Annual
                     height=260
                 )
 
-            # =============================================
-            # Standard workflow for remaining sections
-            # =============================================
+            # Remaining standard sections
             else:
                 source_data = st.text_area(
                     f"Source Data for {section['title']}",
@@ -678,6 +852,23 @@ Report Status: Annual
         key="full_pader_report",
         height=600
     )
+
+    # -----------------------------------------------------
+    # Step 5: Export
+    # -----------------------------------------------------
+    st.header("Step 5: Export")
+
+    full_report_text = st.session_state.get("full_pader_report", "")
+    if full_report_text:
+        docx_bytes = export_report_to_word(full_report_text)
+        st.download_button(
+            label="Download Full PADER Report as Word",
+            data=docx_bytes,
+            file_name="PADER_Report.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
+    else:
+        st.info("Assemble the full report first to enable Word export.")
 
 elif report_type in ["PBRER", "DSUR"]:
     st.info(f"{report_type} module coming soon.")
