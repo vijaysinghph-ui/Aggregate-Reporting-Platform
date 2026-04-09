@@ -46,17 +46,22 @@ REPORT_TYPES = {
     "DSUR": {"sections": []}
 }
 
+
 def generate_ai_draft(section_title, section_purpose, source_data, comments, product_name, interval_start, interval_end):
     api_key = st.secrets.get("OPENAI_API_KEY", None)
     if not api_key:
         return "ERROR: OPENAI_API_KEY not found in Streamlit secrets."
+
+    if not source_data.strip():
+        return "ERROR: Please enter source data before generating a draft."
 
     client = OpenAI(api_key=api_key)
 
     instructions = (
         "You are an expert pharmacovigilance medical writer. "
         "Draft only the requested report section in a concise, professional, regulatory style. "
-        "Use only the source data provided. Do not invent facts, numbers, dates, or conclusions. "
+        "Use only the source data provided. "
+        "Do not invent facts, numbers, dates, tables, or conclusions. "
         "If information is missing, stay neutral and do not hallucinate. "
         "Return only the drafted section text."
     )
@@ -78,14 +83,16 @@ Drafting Instructions:
 {comments}
 """
 
-    response = client.responses.create(
-        model="gpt-5",
-        instructions=instructions,
-        input=user_input,
-        temperature=0.2,
-    )
+    try:
+        response = client.responses.create(
+            model="gpt-5.4",
+            instructions=instructions,
+            input=user_input,
+        )
+        return response.output_text
+    except Exception as e:
+        return f"ERROR: {str(e)}"
 
-    return response.output_text
 
 st.title("Viginovix Aggregate Reporting Platform")
 st.write("Prototype: AI-assisted aggregate report authoring and review")
