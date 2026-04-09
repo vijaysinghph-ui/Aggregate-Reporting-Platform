@@ -94,6 +94,30 @@ Drafting Instructions:
         return f"ERROR: {str(e)}"
 
 
+def assemble_full_report(product_name, interval_start, interval_end, report_owner, sections):
+    report_parts = []
+
+    report_parts.append("ANNUAL ADVERSE DRUG EXPERIENCE REPORT")
+    report_parts.append(f"Product: {product_name}")
+    report_parts.append(f"Review Period: {interval_start} to {interval_end}")
+    report_parts.append(f"Report Owner: {report_owner}")
+    report_parts.append("\n" + "=" * 80 + "\n")
+
+    for section in sections:
+        section_title = section["title"]
+        draft_key = f"draft_{section['id']}"
+        section_text = st.session_state.get(draft_key, "").strip()
+
+        if not section_text:
+            section_text = "[No draft available for this section yet.]"
+
+        report_parts.append(section_title)
+        report_parts.append(section_text)
+        report_parts.append("\n" + "-" * 80 + "\n")
+
+    return "\n".join(report_parts)
+
+
 st.title("Viginovix Aggregate Reporting Platform")
 st.write("Prototype: AI-assisted aggregate report authoring and review")
 
@@ -164,6 +188,24 @@ if report_type == "PADER":
                 key=f"draft_{section['id']}",
                 height=220
             )
+
+    st.header("Step 4: Assemble Full Report")
+
+    if st.button("Assemble Full PADER Report"):
+        full_report = assemble_full_report(
+            product_name=product_name,
+            interval_start=interval_start,
+            interval_end=interval_end,
+            report_owner=report_owner,
+            sections=pader_sections
+        )
+        st.session_state["full_pader_report"] = full_report
+
+    st.text_area(
+        "Full PADER Report Output",
+        key="full_pader_report",
+        height=500
+    )
 
 elif report_type in ["PBRER", "DSUR"]:
     st.info(f"{report_type} module coming soon.")
