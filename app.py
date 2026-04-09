@@ -1,4 +1,3 @@
-import os
 import streamlit as st
 from datetime import date
 from openai import OpenAI
@@ -43,20 +42,14 @@ REPORT_TYPES = {
             }
         ]
     },
-    "PBRER": {
-        "sections": []
-    },
-    "DSUR": {
-        "sections": []
-    }
+    "PBRER": {"sections": []},
+    "DSUR": {"sections": []}
 }
 
-
 def generate_ai_draft(section_title, section_purpose, source_data, comments, product_name, interval_start, interval_end):
-    api_key = os.getenv("OPENAI_API_KEY")
-
+    api_key = st.secrets.get("OPENAI_API_KEY", None)
     if not api_key:
-        return "ERROR: OPENAI_API_KEY is not set."
+        return "ERROR: OPENAI_API_KEY not found in Streamlit secrets."
 
     client = OpenAI(api_key=api_key)
 
@@ -93,7 +86,6 @@ Drafting Instructions:
     )
 
     return response.output_text
-
 
 st.title("Viginovix Aggregate Reporting Platform")
 st.write("Prototype: AI-assisted aggregate report authoring and review")
