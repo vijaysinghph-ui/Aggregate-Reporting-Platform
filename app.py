@@ -42,12 +42,12 @@ REPORT_TYPES = {
             {
                 "id": "summary_alerts_new_ades_followup",
                 "title": "2. Summary of Submitted 15-Day Alerts, New Adverse Drug Experiences and New Adverse Drug Experience Follow-up",
-                "purpose": "Summarize 15-day alerts, non-expedited new adverse drug experiences, follow-up reports, case tables, and overall safety interpretation."
+                "purpose": "Present case data in different review modes such as topic evaluation, narrative summary with causality, and aggregate analysis for serious unlisted cases."
             },
             {
                 "id": "actions_taken",
                 "title": "3. Actions Taken Since Last Periodic Adverse Drug Experience Report",
-                "purpose": "Capture any safety-related actions, labeling changes, and references to current prescribing information or appendices."
+                "purpose": "Summarize product-specific regulatory actions, labeling changes, safety actions, and related authority actions during the reporting period."
             },
             {
                 "id": "conclusion",
@@ -134,6 +134,7 @@ def generate_introduction_draft(
     interval_end,
     section_purpose: str,
     previous_intro_text: str,
+    label_reference_text: str,
     current_change_notes: str,
     instructions_text: str,
     report_context_text: str
@@ -144,10 +145,11 @@ def generate_introduction_draft(
 
     instructions = (
         "You are an expert pharmacovigilance medical writer drafting the Introduction section of a PADER. "
-        "Use previous PADER introduction text only as reference, not as unquestioned truth. "
-        "Always prioritize current report context and explicit user updates. "
+        "Use previous PADER text as historical reference only. "
+        "Use label text as current product truth source when relevant. "
+        "Always prioritize the current report context and explicit user updates. "
         "Refresh the wording for the current reporting interval. "
-        "Do not copy outdated statements if current change notes indicate updates. "
+        "Do not copy outdated statements blindly. "
         "Do not invent facts. "
         "Do not repeat the section title. "
         "Return only the section body text."
@@ -165,8 +167,11 @@ Current Reporting Interval:
 Start: {interval_start}
 End: {interval_end}
 
-Reference Text from Previous PADER Introduction:
+Reference Text from Previous PADER:
 {previous_intro_text}
+
+Reference Text from Label:
+{label_reference_text}
 
 What Changed for Current Report:
 {current_change_notes}
@@ -199,105 +204,28 @@ def read_uploaded_table(uploaded_file):
         return None
 
 
-def detect_column(df: pd.DataFrame, candidates: list[str]):
-    cols = list(df.columns)
-    lower_map = {str(c).strip().lower(): c for c in cols}
+def summarize_dataframe(df: pd.DataFrame, max_rows: int = 10) -> str:
+    if df is None or df.empty:
+        return "No data available."
 
-    for cand in candidates:
-        cand_l = cand.strip().lower()
-        if cand_l in lower_map:
-            return lower_map[cand_l]
-
-    for cand in candidates:
-        cand_l = cand.strip().lower()
-        for c in cols:
-            if cand_l in str(c).strip().lower():
-                return c
-
-    return None
+    lines = [f"Total rows: {len(df)}", f"Columns: {list(df.columns)}", "", "Sample rows:"]
+    preview = df.head(max_rows)
+    for _, row in preview.iterrows():
+        row_text = " | ".join([f"{col}: {row[col]}" for col in preview.columns[:8]])
+        lines.append(f"- {row_text}")
+    return "\n".join(lines)
 
 
-def summarize_line_listing(df: pd.DataFrame) -> str:
+def summarize_line_listing_basic(df: pd.DataFrame) -> str:
     if df is None or df.empty:
         return "No line listing data available."
-
-    case_id_col = detect_column(df, ["case id", "case_id", "case number", "case no"])
-    event_col = detect_column(df, ["event term", "adverse drug experiences", "event", "pt", "preferred term"])
-    report_type_col = detect_column(df, ["report type"])
-    seriousness_col = detect_column(df, ["seriousness", "serious"])
-    expedited_col = detect_column(df, ["expedited status", "expedited"])
-    followup_col = detect_column(df, ["follow-up", "follow up"])
-    country_col = detect_column(df, ["country"])
-    submission_date_col = detect_column(df, ["submission date", "date submitted to food and drug administration", "date submitted"])
-
-    summary_lines = []
-    summary_lines.append(f"Total number of line listing rows: {len(df)}")
-
-    summary_lines.append("Detected columns:")
-    summary_lines.append(f"- Case ID: {case_id_col}")
-    summary_lines.append(f"- Event Term: {event_col}")
-    summary_lines.append(f"- Report Type: {report_type_col}")
-    summary_lines.append(f"- Seriousness: {seriousness_col}")
-    summary_lines.append(f"- Expedited Status: {expedited_col}")
-    summary_lines.append(f"- Follow-up: {followup_col}")
-    summary_lines.append(f"- Country: {country_col}")
-    summary_lines.append(f"- Submission Date: {submission_date_col}")
-
-    expedited_count = None
-    if expedited_col:
-        expedited_count = df[df[expedited_col].astype(str).str.lower().isin(["yes", "y", "true", "1", "expedited"])].shape[0]
-    elif report_type_col:
-        expedited_count = df[df[report_type_col].astype(str).str.lower().str.contains("15|alert|expedited", na=False)].shape[0]
-
-    followup_count = None
-    if followup_col:
-        followup_count = df[df[followup_col].astype(str).str.lower().isin(["yes", "y", "true", "1", "follow-up", "follow up"])].shape[0]
-    elif report_type_col:
-        followup_count = df[df[report_type_col].astype(str).str.lower().str.contains("follow", na=False)].shape[0]
-
-    serious_count = None
-    if seriousness_col:
-        serious_count = df[df[seriousness_col].astype(str).str.lower().str.contains("serious|yes|y|true", na=False)].shape[0]
-
-    non_expedited_count = None
-    if expedited_count is not None:
-        non_expedited_count = len(df) - expedited_count
-
-    summary_lines.append("")
-    summary_lines.append("Computed case summary:")
-    summary_lines.append(f"- Total cases: {len(df)}")
-    summary_lines.append(f"- Expedited / 15-day alert cases: {expedited_count if expedited_count is not None else 'Not determined'}")
-    summary_lines.append(f"- Non-expedited cases: {non_expedited_count if non_expedited_count is not None else 'Not determined'}")
-    summary_lines.append(f"- Follow-up cases: {followup_count if followup_count is not None else 'Not determined'}")
-    summary_lines.append(f"- Serious cases: {serious_count if serious_count is not None else 'Not determined'}")
-
-    if country_col:
-        summary_lines.append("")
-        summary_lines.append("Country distribution:")
-        country_counts = df[country_col].astype(str).value_counts(dropna=False).head(10)
-        for idx, val in country_counts.items():
-            summary_lines.append(f"- {idx}: {val}")
-
-    if event_col:
-        summary_lines.append("")
-        summary_lines.append("Most frequent event terms:")
-        event_counts = df[event_col].astype(str).value_counts(dropna=False).head(10)
-        for idx, val in event_counts.items():
-            summary_lines.append(f"- {idx}: {val}")
-
-    if case_id_col and event_col:
-        summary_lines.append("")
-        summary_lines.append("Sample case rows:")
-        sample_df = df[[case_id_col, event_col]].head(5)
-        for _, row in sample_df.iterrows():
-            summary_lines.append(f"- Case ID {row[case_id_col]} | Event: {row[event_col]}")
-
-    return "\n".join(summary_lines)
+    return summarize_dataframe(df, max_rows=5)
 
 
 def generate_section2_draft(
     section_title: str,
     section_purpose: str,
+    analysis_mode: str,
     line_listing_summary: str,
     medical_notes: str,
     product_name: str,
@@ -312,12 +240,10 @@ def generate_section2_draft(
         return "ERROR: No line listing summary available."
 
     instructions = (
-        "You are an expert pharmacovigilance medical writer drafting the PADER section "
-        "'Summary of Submitted 15-Day Alerts, New Adverse Drug Experiences and New Adverse Drug Experience Follow-up'. "
-        "Use only the uploaded line listing summary and user medical/regulatory notes. "
-        "Do not invent counts, dates, case IDs, or conclusions. "
-        "Keep 15-day alerts, new adverse drug experiences, and follow-up information clearly separated when possible. "
-        "Use a formal, concise, regulatory tone. "
+        "You are an expert pharmacovigilance medical writer drafting a PADER safety summary section. "
+        "Use only the provided uploaded line listing summary and user notes. "
+        "Do not invent counts, case IDs, dates, medical interpretations, or conclusions. "
+        "Follow the requested analysis mode carefully. "
         "Do not repeat the section title. "
         "Return only the section body text."
     )
@@ -326,6 +252,7 @@ def generate_section2_draft(
 Report Type: PADER
 Section Title: {section_title}
 Section Purpose: {section_purpose}
+Analysis Mode: {analysis_mode}
 
 Current Report Context:
 Product Name: {product_name}
@@ -350,6 +277,60 @@ Medical / Regulatory Notes:
         return f"ERROR: {str(e)}"
 
 
+def generate_actions_taken_draft(
+    section_title: str,
+    section_purpose: str,
+    regulatory_actions_summary: str,
+    comments: str,
+    product_name: str,
+    interval_start,
+    interval_end
+) -> str:
+    client = get_openai_client()
+    if client is None:
+        return "ERROR: OPENAI_API_KEY not found in Streamlit secrets."
+
+    if not safe_text(regulatory_actions_summary).strip():
+        return "ERROR: No regulatory action source data available."
+
+    instructions = (
+        "You are an expert pharmacovigilance medical writer drafting the PADER section "
+        "'Actions Taken Since Last Periodic Adverse Drug Experience Report'. "
+        "Use only the uploaded regulatory action and label/action source data. "
+        "Do not invent actions, approvals, label changes, or authority decisions. "
+        "If no actions are present in the source data, state that no relevant actions were identified during the reporting period. "
+        "Do not repeat the section title. "
+        "Return only the section body text."
+    )
+
+    user_input = f"""
+Report Type: PADER
+Section Title: {section_title}
+Section Purpose: {section_purpose}
+
+Current Report Context:
+Product Name: {product_name}
+Reporting Interval Start: {interval_start}
+Reporting Interval End: {interval_end}
+
+Regulatory Action Source Summary:
+{regulatory_actions_summary}
+
+Drafting Instructions:
+{comments}
+"""
+
+    try:
+        response = client.responses.create(
+            model="gpt-5.4",
+            instructions=instructions,
+            input=user_input,
+        )
+        return response.output_text.strip()
+    except Exception as e:
+        return f"ERROR: {str(e)}"
+
+
 def generate_cover_page_text(
     product_name: str,
     dosage_strength: str,
@@ -359,10 +340,12 @@ def generate_cover_page_text(
     interval_end,
     approval_date,
     report_status: str,
+    report_status_other: str,
     report_date,
     confidentiality_statement: str,
     company_address: str
 ) -> str:
+    final_status = report_status_other if report_status == "Other" and report_status_other else report_status
     lines = [
         "ANNUAL ADVERSE DRUG EXPERIENCE REPORT",
         f"({interval_start} to {interval_end})",
@@ -376,7 +359,7 @@ def generate_cover_page_text(
         "",
         f"Approval Date: {approval_date}",
         f"Review Period: {interval_start} to {interval_end}",
-        f"Report Status: {report_status}",
+        f"Report Status: {final_status}",
         f"Date of Report: {report_date}",
         "",
         confidentiality_statement
@@ -539,7 +522,14 @@ if report_type == "PADER":
         region = st.selectbox("Region", ["US", "EU", "UK", "Global"])
         template_version = st.text_input("Template Version", value="v1.0")
         report_owner = st.text_input("Report Owner")
-        report_status = st.selectbox("Report Status", ["Annual", "Quarterly"])
+        report_status = st.selectbox(
+            "Report Status",
+            ["Annual", "Quarterly",  "Other"]
+        )
+
+    report_status_other = ""
+    if report_status == "Other":
+        report_status_other = st.text_input("If Other, specify Report Status")
 
     report_date = st.date_input("Date of Report", value=date.today())
     confidentiality_statement = st.text_area(
@@ -547,21 +537,6 @@ if report_type == "PADER":
         value="This document is a confidential communication. Acceptance of this document constitutes an agreement by the recipient that no unpublished information contained herein will be published or disclosed without prior written approval.",
         height=100
     )
-
-    st.subheader("Report Setup Summary")
-    st.write(f"**Product Name:** {product_name}")
-    st.write(f"**NDA / ANDA Number:** {nda_anda_number}")
-    st.write(f"**Approval Date:** {approval_date}")
-    st.write(f"**Company Name:** {company_name}")
-    st.write(f"**Dosage Form / Strength:** {dosage_strength}")
-    st.write(f"**Interval Start:** {interval_start}")
-    st.write(f"**Interval End:** {interval_end}")
-    st.write(f"**Data Lock Point:** {data_lock_point}")
-    st.write(f"**Region:** {region}")
-    st.write(f"**Template Version:** {template_version}")
-    st.write(f"**Report Owner:** {report_owner}")
-    st.write(f"**Report Status:** {report_status}")
-    st.write(f"**Date of Report:** {report_date}")
 
     # -----------------------------------------------------
     # Approval workflow fields
@@ -603,6 +578,7 @@ if report_type == "PADER":
                         interval_end=interval_end,
                         approval_date=approval_date,
                         report_status=report_status,
+                        report_status_other=report_status_other,
                         report_date=report_date,
                         confidentiality_statement=confidentiality_statement,
                         company_address=company_address
@@ -662,7 +638,7 @@ Dosage Form / Strength: {dosage_strength}
 Reporting Interval Start: {interval_start}
 Reporting Interval End: {interval_end}
 Region: {region}
-Report Status: {report_status}
+Report Status: {report_status_other if report_status == 'Other' and report_status_other else report_status}
 """
 
                 st.text_area(
@@ -672,18 +648,32 @@ Report Status: {report_status}
                     height=180
                 )
 
-                st.subheader("Upload Previous PADER (optional)")
+                st.subheader("Upload Previous PADER")
                 st.file_uploader(
-                    "Upload Previous PADER (PDF or DOCX) - placeholder for future extraction workflow",
+                    "Upload Previous PADER (PDF or DOCX)",
                     type=["pdf", "docx"],
                     key="previous_pader_upload"
                 )
 
-                st.subheader("Extracted Prior Introduction / Reference Text")
+                st.subheader("Upload Label")
+                st.file_uploader(
+                    "Upload Product Label (PDF or DOCX)",
+                    type=["pdf", "docx"],
+                    key="label_upload"
+                )
+
+                st.subheader("Reference Text from Previous PADER")
                 previous_intro_text = st.text_area(
                     "Paste extracted or reference text from previous PADER Introduction",
                     key="previous_intro_text",
-                    height=220
+                    height=180
+                )
+
+                st.subheader("Reference Text from Label")
+                label_reference_text = st.text_area(
+                    "Paste extracted or reference text from product label",
+                    key="label_reference_text",
+                    height=180
                 )
 
                 st.subheader("What Changed for Current Report?")
@@ -708,6 +698,7 @@ Report Status: {report_status}
                             interval_end=interval_end,
                             section_purpose=section["purpose"],
                             previous_intro_text=previous_intro_text,
+                            label_reference_text=label_reference_text,
                             current_change_notes=current_change_notes,
                             instructions_text=intro_comments,
                             report_context_text=st.session_state.get("intro_report_context", intro_context)
@@ -738,6 +729,19 @@ Report Status: {report_status}
 
                 df = st.session_state.get("line_listing_df", None)
 
+                analysis_mode = st.selectbox(
+                    "Select Analysis View",
+                    [
+                        "Topic Evaluation",
+                        "Narrative Summary with Causality",
+                        "Aggregate Analysis for Serious Unlisted Cases"
+                    ],
+                    key="section2_analysis_mode"
+                )
+
+                if analysis_mode == "Topic Evaluation":
+                    st.text_input("Enter Topic of Interest (e.g., Fatal, Hepatic, by SOC)", key="section2_topic_input")
+
                 st.subheader("Expected Columns")
                 st.write(
                     "- Case ID\n"
@@ -749,7 +753,10 @@ Report Status: {report_status}
                     "- Expedited Status\n"
                     "- Follow-up\n"
                     "- Country\n"
-                    "- Case Evaluation"
+                    "- Case Evaluation\n"
+                    "- SOC (if available)\n"
+                    "- Listedness / Unlistedness (if available)\n"
+                    "- Causality (if available)"
                 )
 
                 if df is not None:
@@ -757,7 +764,18 @@ Report Status: {report_status}
                     st.dataframe(df.head(10), use_container_width=True)
 
                     st.subheader("Auto-Generated Case Summary")
-                    summary_text = summarize_line_listing(df)
+                    summary_text = summarize_line_listing_basic(df)
+
+                    extra_mode_context = ""
+                    if analysis_mode == "Topic Evaluation":
+                        extra_mode_context = f"\nTopic of Interest: {st.session_state.get('section2_topic_input', '')}"
+                    elif analysis_mode == "Narrative Summary with Causality":
+                        extra_mode_context = "\nRequested Output Mode: Narrative summary with causality focus."
+                    elif analysis_mode == "Aggregate Analysis for Serious Unlisted Cases":
+                        extra_mode_context = "\nRequested Output Mode: Aggregate analysis for serious unlisted cases."
+
+                    summary_text = summary_text + "\n" + extra_mode_context
+
                     st.text_area(
                         "Line Listing Summary Used for Drafting",
                         value=summary_text,
@@ -781,10 +799,11 @@ Report Status: {report_status}
                         st.error("Please upload a line listing file first.")
                     else:
                         with st.spinner("Generating AI draft for Section 2..."):
-                            summary_text = st.session_state.get("line_listing_summary", summarize_line_listing(df))
+                            summary_text = st.session_state.get("line_listing_summary", summarize_line_listing_basic(df))
                             draft_text = generate_section2_draft(
                                 section_title=section["title"],
                                 section_purpose=section["purpose"],
+                                analysis_mode=analysis_mode,
                                 line_listing_summary=summary_text,
                                 medical_notes=medical_notes,
                                 product_name=product_name,
@@ -796,6 +815,67 @@ Report Status: {report_status}
                 st.text_area(
                     "Draft Output for Section 2",
                     key="draft_summary_alerts_new_ades_followup",
+                    height=260
+                )
+
+            # Section 3
+            elif section["id"] == "actions_taken":
+                st.subheader("Upload Regulatory Actions / Label Change Source File")
+
+                regulatory_actions_file = st.file_uploader(
+                    "Upload Regulatory Actions File (Excel or CSV)",
+                    type=["xlsx", "csv"],
+                    key="regulatory_actions_upload"
+                )
+
+                if regulatory_actions_file is not None:
+                    reg_df = read_uploaded_table(regulatory_actions_file)
+                    if reg_df is not None:
+                        st.session_state["regulatory_actions_df"] = reg_df
+                        st.success("Regulatory actions file uploaded successfully.")
+
+                reg_df = st.session_state.get("regulatory_actions_df", None)
+
+                if reg_df is not None:
+                    st.subheader("Preview of Uploaded Regulatory Actions Data")
+                    st.dataframe(reg_df.head(10), use_container_width=True)
+
+                    st.subheader("Auto-Generated Regulatory Actions Summary")
+                    reg_summary = summarize_dataframe(reg_df, max_rows=8)
+                    st.text_area(
+                        "Regulatory Actions Summary Used for Drafting",
+                        value=reg_summary,
+                        key="regulatory_actions_summary",
+                        height=280
+                    )
+
+                actions_comments = st.text_area(
+                    "Drafting Instructions for Actions Taken Section",
+                    key="comment_actions_taken",
+                    height=120
+                )
+
+                if st.button("Generate Draft for 3. Actions Taken Since Last Periodic Adverse Drug Experience Report", key="btn_actions_taken"):
+                    reg_df = st.session_state.get("regulatory_actions_df", None)
+                    if reg_df is None:
+                        st.error("Please upload a regulatory actions file first.")
+                    else:
+                        with st.spinner("Generating AI draft for Actions Taken section..."):
+                            reg_summary = st.session_state.get("regulatory_actions_summary", summarize_dataframe(reg_df, max_rows=8))
+                            draft_text = generate_actions_taken_draft(
+                                section_title=section["title"],
+                                section_purpose=section["purpose"],
+                                regulatory_actions_summary=reg_summary,
+                                comments=actions_comments,
+                                product_name=product_name,
+                                interval_start=interval_start,
+                                interval_end=interval_end
+                            )
+                            st.session_state["draft_actions_taken"] = draft_text
+
+                st.text_area(
+                    "Draft Output for 3. Actions Taken Since Last Periodic Adverse Drug Experience Report",
+                    key="draft_actions_taken",
                     height=260
                 )
 
