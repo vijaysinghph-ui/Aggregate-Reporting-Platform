@@ -2,6 +2,7 @@ streamlit
 pandas
 python-docx
 openai
+pypdf
 
 
 
