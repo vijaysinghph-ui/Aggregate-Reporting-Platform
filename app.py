@@ -73,6 +73,7 @@ def get_openai_client():
         return None
     return OpenAI(api_key=api_key)
 
+
 def safe_text(value) -> str:
     return "" if value is None else str(value)
 
@@ -82,7 +83,7 @@ def safe_text(value) -> str:
 def extract_text_from_pdf(uploaded_file) -> str:
     """
     Extract text from searchable PDFs.
-    If the PDF is image-only/scanned, output may be poor or empty.
+    If the PDF is scanned/image-only, output may be poor or empty.
     """
     try:
         uploaded_file.seek(0)
@@ -97,6 +98,7 @@ def extract_text_from_pdf(uploaded_file) -> str:
         return "\n".join(texts).strip()
     except Exception:
         return ""
+
 
 def extract_text_from_docx(uploaded_file) -> str:
     """
@@ -115,12 +117,14 @@ def extract_text_from_docx(uploaded_file) -> str:
     except Exception:
         return ""
 
+
 def extract_text_from_txt(uploaded_file) -> str:
     try:
         uploaded_file.seek(0)
         return uploaded_file.read().decode("utf-8", errors="ignore")
     except Exception:
         return ""
+
 
 def extract_reference_text(uploaded_file) -> str:
     """
@@ -156,6 +160,7 @@ def read_uploaded_table(uploaded_file):
         st.error(f"Error reading file: {str(e)}")
         return None
 
+
 def detect_column(df: pd.DataFrame, candidates: list[str]):
     cols = list(df.columns)
     lower_map = {str(c).strip().lower(): c for c in cols}
@@ -173,6 +178,7 @@ def detect_column(df: pd.DataFrame, candidates: list[str]):
 
     return None
 
+
 def summarize_dataframe(df: pd.DataFrame, max_rows: int = 10) -> str:
     if df is None or df.empty:
         return "No data available."
@@ -183,6 +189,7 @@ def summarize_dataframe(df: pd.DataFrame, max_rows: int = 10) -> str:
         row_text = " | ".join([f"{col}: {row[col]}" for col in preview.columns[:8]])
         lines.append(f"- {row_text}")
     return "\n".join(lines)
+
 
 def build_line_listing_backend_summary(df: pd.DataFrame) -> str:
     """
@@ -344,14 +351,19 @@ Drafting Instructions:
     except Exception as e:
         return f"ERROR: {str(e)}"
 
+
 def generate_introduction_draft(
     report_context_text: str,
     previous_pader_text: str,
     label_text: str,
+    report_status: str,
+    report_status_other: str = ""
 ) -> str:
     client = get_openai_client()
     if client is None:
         return "ERROR: OPENAI_API_KEY not found in Streamlit secrets."
+
+    final_report_status = report_status_other.strip() if report_status == "Other" and report_status_other else report_status
 
     instructions = (
         "You are an expert pharmacovigilance medical writer drafting the Introduction section of a PADER. "
@@ -363,12 +375,20 @@ def generate_introduction_draft(
         "Do not hallucinate product facts, regulatory details, or placeholders. "
         "Write gracefully even if some information is missing. "
         "Do not repeat the section title. "
+        "Use the report status explicitly as follows: "
+        "if report status is Annual, open with 'This annual Periodic Adverse Drug Experience Report (PADER)...'; "
+        "if report status is Quarterly, open with 'This quarterly Periodic Adverse Drug Experience Report (PADER)...'; "
+        "if report status is Other, use neutral wording such as 'This Periodic Adverse Drug Experience Report (PADER)...' "
+        "unless the custom status clearly supports more specific phrasing. "
         "Return only the Introduction body text."
     )
 
     user_input = f"""
 Current Report Context:
 {report_context_text}
+
+Report Status:
+{final_report_status}
 
 Previous PADER Reference Text:
 {previous_pader_text}
@@ -386,6 +406,7 @@ Current Label Reference Text:
         return response.output_text.strip()
     except Exception as e:
         return f"ERROR: {str(e)}"
+
 
 def generate_section2_draft(
     product_name: str,
@@ -435,6 +456,7 @@ Backend Line Listing Summary:
         return response.output_text.strip()
     except Exception as e:
         return f"ERROR: {str(e)}"
+
 
 def generate_actions_taken_draft(
     regulatory_actions_summary: str,
@@ -518,6 +540,7 @@ def generate_cover_page_text(
     ]
     return "\n".join(lines)
 
+
 def generate_approval_page_text(
     product_name: str,
     interval_start,
@@ -566,6 +589,7 @@ def generate_approval_page_text(
     ]
     return "\n".join(lines)
 
+
 def generate_toc_text(sections: list[dict]) -> str:
     toc_lines = []
     for section in sections:
@@ -605,6 +629,7 @@ def assemble_full_report(
         report_parts.append("\n" + "-" * 80 + "\n")
 
     return "\n".join(report_parts)
+
 
 def export_report_to_word(full_report_text: str) -> bytes:
     doc = Document()
@@ -817,6 +842,8 @@ Report Status: {report_status_other if report_status == 'Other' and report_statu
                             report_context_text=report_context_text,
                             previous_pader_text=previous_pader_text,
                             label_text=label_text,
+                            report_status=report_status,
+                            report_status_other=report_status_other
                         )
                         st.session_state["draft_introduction"] = draft_text
 
