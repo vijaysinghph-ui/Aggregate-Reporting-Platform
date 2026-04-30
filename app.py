@@ -32,10 +32,12 @@ from services.storage import (
 )
 from utils.file_extraction import extract_reference_text
 from utils.table_analysis import (
+    SECTION2_COLUMN_CANDIDATES,
     build_line_listing_backend_summary,
     build_section2_case_tables,
     read_uploaded_table,
     summarize_dataframe,
+    suggest_section2_column_mapping,
 )
 
 
@@ -1132,6 +1134,57 @@ Report Status: {context["report_status_other"] if context["report_status"] == "O
     )
 
 
+def get_section2_mapping_from_state(df) -> dict[str, str | None]:
+    column_lookup = {str(column): column for column in df.columns}
+    mapping = {}
+    for field in SECTION2_COLUMN_CANDIDATES:
+        selected = st.session_state.get(f"section2_mapping_{field}", "Not mapped")
+        mapping[field] = column_lookup.get(selected)
+    return mapping
+
+
+def render_section2_column_mapping(df, editable: bool) -> dict[str, str | None]:
+    st.subheader("Column Mapping")
+    st.caption(
+        "Confirm how the uploaded line listing columns map to the PADER Section 2 fields. "
+        "Auto-detected values can be corrected before generation."
+    )
+
+    defaults = suggest_section2_column_mapping(df)
+    options = ["Not mapped"] + [str(column) for column in df.columns]
+    fields = list(SECTION2_COLUMN_CANDIDATES.items())
+    columns = st.columns(2)
+
+    for index, (field, definition) in enumerate(fields):
+        key = f"section2_mapping_{field}"
+        default_column = defaults.get(field)
+        default_value = str(default_column) if str(default_column) in options else "Not mapped"
+        if st.session_state.get(key) not in options:
+            st.session_state[key] = default_value
+
+        with columns[index % 2]:
+            st.selectbox(
+                definition["label"],
+                options,
+                key=key,
+                disabled=not editable,
+            )
+
+    mapping = get_section2_mapping_from_state(df)
+    missing_core_fields = [
+        SECTION2_COLUMN_CANDIDATES[field]["label"]
+        for field in ["case_id", "event"]
+        if not mapping.get(field)
+    ]
+    if missing_core_fields:
+        st.warning(
+            "Please map these core fields for a better Section 2 table: "
+            + ", ".join(missing_core_fields)
+        )
+
+    return mapping
+
+
 def render_section_2(context: dict, client, editable: bool):
     uploaded_file = st.file_uploader(
         "Upload PADER Line Listing or Source File",
@@ -1140,6 +1193,7 @@ def render_section_2(context: dict, client, editable: bool):
         disabled=not editable,
     )
 
+    section2_mapping = None
     if uploaded_file is not None:
         filename = uploaded_file.name.lower()
         if filename.endswith((".xlsx", ".csv")):
@@ -1147,8 +1201,17 @@ def render_section_2(context: dict, client, editable: bool):
             if df is not None:
                 st.session_state["line_listing_df"] = df
                 st.session_state["line_listing_source_text"] = ""
+                mapping_signature = (
+                    f"{uploaded_file.name}:{len(df)}:"
+                    + "|".join([str(column) for column in df.columns])
+                )
+                if st.session_state.get("line_listing_mapping_signature") != mapping_signature:
+                    for field in SECTION2_COLUMN_CANDIDATES:
+                        st.session_state.pop(f"section2_mapping_{field}", None)
+                    st.session_state["line_listing_mapping_signature"] = mapping_signature
                 st.success("Line listing uploaded successfully.")
                 st.dataframe(df.head(10), use_container_width=True)
+                section2_mapping = render_section2_column_mapping(df, editable)
         else:
             source_text = extract_uploaded_source_text(uploaded_file, "Section 2 source file")
             st.session_state["line_listing_df"] = None
@@ -1161,8 +1224,10 @@ def render_section_2(context: dict, client, editable: bool):
             st.error("Please upload a line listing or source PDF/DOCX/TXT file first.")
         else:
             with st.spinner("Generating Section 2..."):
+                if df is not None:
+                    section2_mapping = section2_mapping or get_section2_mapping_from_state(df)
                 backend_summary = (
-                    build_line_listing_backend_summary(df)
+                    build_line_listing_backend_summary(df, section2_mapping)
                     if df is not None
                     else source_text[:12000]
                 )
@@ -1173,7 +1238,11 @@ def render_section_2(context: dict, client, editable: bool):
                     interval_end=context["interval_end"],
                     line_listing_summary=backend_summary,
                 )
-                case_tables = build_section2_case_tables(df) if df is not None else ""
+                case_tables = (
+                    build_section2_case_tables(df, section2_mapping)
+                    if df is not None
+                    else ""
+                )
                 if case_tables:
                     draft_text = f"{draft_text}\n\n{case_tables}"
                 st.session_state["draft_summary_alerts_new_ades_followup"] = draft_text
