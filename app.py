@@ -32,13 +32,89 @@ from services.storage import (
 )
 from utils.file_extraction import extract_reference_text
 from utils.table_analysis import (
-    SECTION2_COLUMN_CANDIDATES,
     build_line_listing_backend_summary,
     build_section2_case_tables,
     read_uploaded_table,
     summarize_dataframe,
-    suggest_section2_column_mapping,
 )
+
+
+SECTION2_COLUMN_CANDIDATES = {
+    "case_id": {
+        "label": "Case ID Number",
+        "candidates": ["case id", "case number", "case no", "case_id"],
+        "exclude_terms": [],
+    },
+    "event": {
+        "label": "Adverse Drug Experiences / Event Term",
+        "candidates": [
+            "adverse drug experiences",
+            "adverse event term",
+            "event term",
+            "preferred term",
+            "reaction term",
+            "reported event",
+            "pt",
+        ],
+        "exclude_terms": ["date", "year", "onset", "receipt", "received"],
+    },
+    "date_submitted": {
+        "label": "Date Submitted to FDA",
+        "candidates": [
+            "date submitted to fda",
+            "date submitted",
+            "submission date",
+            "date received",
+            "received date",
+        ],
+        "exclude_terms": [],
+    },
+    "report_type": {
+        "label": "Report Type",
+        "candidates": ["report type"],
+        "exclude_terms": [],
+    },
+    "expedited": {
+        "label": "15-Day Alert / Expedited Flag",
+        "candidates": ["expedited status", "expedited", "15-day", "15 day", "alert"],
+        "exclude_terms": [],
+    },
+    "followup": {
+        "label": "Follow-up Flag",
+        "candidates": ["follow-up", "follow up", "followup"],
+        "exclude_terms": [],
+    },
+    "seriousness": {
+        "label": "Seriousness",
+        "candidates": ["seriousness", "serious"],
+        "exclude_terms": [],
+    },
+    "listedness": {
+        "label": "Listedness",
+        "candidates": ["listedness", "listed/unlisted", "listedness status"],
+        "exclude_terms": [],
+    },
+    "causality": {
+        "label": "Causality / Relatedness",
+        "candidates": ["causality", "relatedness", "causal association"],
+        "exclude_terms": [],
+    },
+    "outcome": {
+        "label": "Outcome",
+        "candidates": ["outcome"],
+        "exclude_terms": [],
+    },
+    "soc": {
+        "label": "System Organ Class",
+        "candidates": ["soc", "system organ class"],
+        "exclude_terms": [],
+    },
+    "country": {
+        "label": "Country",
+        "candidates": ["country"],
+        "exclude_terms": [],
+    },
+}
 
 
 st.set_page_config(
@@ -102,6 +178,53 @@ def read_table_or_show_error(uploaded_file):
     if error:
         st.error(f"Error reading file: {error}")
     return df
+
+
+def detect_uploaded_column(df, candidates: list[str], exclude_terms: list[str] | None = None):
+    column_lookup = {str(column).strip().lower(): column for column in df.columns}
+    exclude_terms = [term.strip().lower() for term in (exclude_terms or [])]
+
+    def is_allowed(column_name) -> bool:
+        normalized = str(column_name).strip().lower()
+        return not any(term in normalized for term in exclude_terms)
+
+    for candidate in candidates:
+        normalized_candidate = candidate.strip().lower()
+        if normalized_candidate in column_lookup and is_allowed(column_lookup[normalized_candidate]):
+            return column_lookup[normalized_candidate]
+
+    for candidate in candidates:
+        normalized_candidate = candidate.strip().lower()
+        for column in df.columns:
+            if normalized_candidate in str(column).strip().lower() and is_allowed(column):
+                return column
+
+    return None
+
+
+def suggest_section2_column_mapping(df) -> dict[str, object | None]:
+    return {
+        field: detect_uploaded_column(
+            df,
+            definition["candidates"],
+            exclude_terms=definition.get("exclude_terms"),
+        )
+        for field, definition in SECTION2_COLUMN_CANDIDATES.items()
+    }
+
+
+def build_section2_summary(df, mapping: dict[str, object | None]) -> str:
+    try:
+        return build_line_listing_backend_summary(df, mapping)
+    except TypeError:
+        return build_line_listing_backend_summary(df)
+
+
+def build_section2_tables(df, mapping: dict[str, object | None]) -> str:
+    try:
+        return build_section2_case_tables(df, mapping)
+    except TypeError:
+        return build_section2_case_tables(df)
 
 
 def extract_uploaded_source_text(uploaded_file, label: str) -> str:
@@ -1227,7 +1350,7 @@ def render_section_2(context: dict, client, editable: bool):
                 if df is not None:
                     section2_mapping = section2_mapping or get_section2_mapping_from_state(df)
                 backend_summary = (
-                    build_line_listing_backend_summary(df, section2_mapping)
+                    build_section2_summary(df, section2_mapping)
                     if df is not None
                     else source_text[:12000]
                 )
@@ -1239,7 +1362,7 @@ def render_section_2(context: dict, client, editable: bool):
                     line_listing_summary=backend_summary,
                 )
                 case_tables = (
-                    build_section2_case_tables(df, section2_mapping)
+                    build_section2_tables(df, section2_mapping)
                     if df is not None
                     else ""
                 )
