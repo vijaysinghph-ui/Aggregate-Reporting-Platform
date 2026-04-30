@@ -102,6 +102,29 @@ def read_table_or_show_error(uploaded_file):
     return df
 
 
+def extract_uploaded_source_text(uploaded_file, label: str) -> str:
+    if uploaded_file is None:
+        return ""
+
+    extracted_text = extract_reference_text(uploaded_file)
+    if extracted_text:
+        st.success(f"{label} uploaded and text extracted successfully.")
+        with st.expander(f"Preview extracted text from {uploaded_file.name}"):
+            st.text_area(
+                "Extracted Text Preview",
+                value=extracted_text[:4000],
+                height=220,
+                disabled=True,
+                key=f"preview_{label}_{uploaded_file.name}",
+            )
+    else:
+        st.warning(
+            f"No extractable text was found in {uploaded_file.name}. "
+            "If this is a scanned PDF, OCR will be needed before the AI can read it."
+        )
+    return extracted_text
+
+
 def get_secret_value(key: str, default=None):
     try:
         return st.secrets.get(key, default)
@@ -1111,26 +1134,38 @@ Report Status: {context["report_status_other"] if context["report_status"] == "O
 
 def render_section_2(context: dict, client, editable: bool):
     uploaded_file = st.file_uploader(
-        "Upload PADER Line Listing",
-        type=["xlsx", "csv"],
+        "Upload PADER Line Listing or Source File",
+        type=["xlsx", "csv", "pdf", "docx", "txt"],
         key="line_listing_upload",
         disabled=not editable,
     )
 
     if uploaded_file is not None:
-        df = read_table_or_show_error(uploaded_file)
-        if df is not None:
-            st.session_state["line_listing_df"] = df
-            st.success("Line listing uploaded successfully.")
-            st.dataframe(df.head(10), use_container_width=True)
+        filename = uploaded_file.name.lower()
+        if filename.endswith((".xlsx", ".csv")):
+            df = read_table_or_show_error(uploaded_file)
+            if df is not None:
+                st.session_state["line_listing_df"] = df
+                st.session_state["line_listing_source_text"] = ""
+                st.success("Line listing uploaded successfully.")
+                st.dataframe(df.head(10), use_container_width=True)
+        else:
+            source_text = extract_uploaded_source_text(uploaded_file, "Section 2 source file")
+            st.session_state["line_listing_df"] = None
+            st.session_state["line_listing_source_text"] = source_text
 
     if st.button("Generate Section 2", key="btn_summary_alerts_new_ades_followup", disabled=not editable):
         df = st.session_state.get("line_listing_df", None)
-        if df is None:
-            st.error("Please upload a line listing file first.")
+        source_text = st.session_state.get("line_listing_source_text", "")
+        if df is None and not source_text:
+            st.error("Please upload a line listing or source PDF/DOCX/TXT file first.")
         else:
             with st.spinner("Generating Section 2..."):
-                backend_summary = build_line_listing_backend_summary(df)
+                backend_summary = (
+                    build_line_listing_backend_summary(df)
+                    if df is not None
+                    else source_text[:12000]
+                )
                 draft_text = generate_section2_draft(
                     client=client,
                     product_name=context["product_name"],
@@ -1138,7 +1173,7 @@ def render_section_2(context: dict, client, editable: bool):
                     interval_end=context["interval_end"],
                     line_listing_summary=backend_summary,
                 )
-                case_tables = build_section2_case_tables(df)
+                case_tables = build_section2_case_tables(df) if df is not None else ""
                 if case_tables:
                     draft_text = f"{draft_text}\n\n{case_tables}"
                 st.session_state["draft_summary_alerts_new_ades_followup"] = draft_text
@@ -1152,30 +1187,49 @@ def render_section_2(context: dict, client, editable: bool):
 
 
 def render_actions_taken(context: dict, client, editable: bool):
+    st.caption(
+        "Upload the current-period regulatory actions source as Excel/CSV or as a searchable "
+        "PDF/DOCX/TXT file."
+    )
     regulatory_actions_file = st.file_uploader(
-        "Upload Regulatory Actions File",
-        type=["xlsx", "csv"],
+        "Upload Regulatory Actions File for Section 3",
+        type=["xlsx", "csv", "pdf", "docx", "txt"],
         key="regulatory_actions_upload",
         disabled=not editable,
     )
 
     if regulatory_actions_file is not None:
-        reg_df = read_table_or_show_error(regulatory_actions_file)
-        if reg_df is not None:
-            st.session_state["regulatory_actions_df"] = reg_df
-            st.success("Regulatory actions file uploaded successfully.")
-            st.dataframe(reg_df.head(10), use_container_width=True)
+        filename = regulatory_actions_file.name.lower()
+        if filename.endswith((".xlsx", ".csv")):
+            reg_df = read_table_or_show_error(regulatory_actions_file)
+            if reg_df is not None:
+                st.session_state["regulatory_actions_df"] = reg_df
+                st.session_state["regulatory_actions_source_text"] = ""
+                st.success("Regulatory actions file uploaded successfully.")
+                st.dataframe(reg_df.head(10), use_container_width=True)
+        else:
+            source_text = extract_uploaded_source_text(
+                regulatory_actions_file,
+                "Regulatory actions source file",
+            )
+            st.session_state["regulatory_actions_df"] = None
+            st.session_state["regulatory_actions_source_text"] = source_text
 
     if st.button("Generate Section 3", key="btn_actions_taken", disabled=not editable):
         reg_df = st.session_state.get("regulatory_actions_df", None)
+        source_text = st.session_state.get("regulatory_actions_source_text", "")
 
-        if reg_df is None:
+        if reg_df is None and not source_text:
             draft_text = (
                 "No actions related to safety, labeling, or regulatory authority decisions "
                 "were identified during the reporting interval."
             )
         else:
-            reg_summary = summarize_dataframe(reg_df, max_rows=8)
+            reg_summary = (
+                summarize_dataframe(reg_df, max_rows=8)
+                if reg_df is not None
+                else source_text[:12000]
+            )
             draft_text = generate_actions_taken_draft(
                 client=client,
                 regulatory_actions_summary=reg_summary,
@@ -1194,7 +1248,60 @@ def render_actions_taken(context: dict, client, editable: bool):
     )
 
 
+def render_conclusion(context: dict, client, editable: bool):
+    comments = st.text_area(
+        "Comments / Drafting Instructions for 4. Conclusion",
+        key="comment_conclusion",
+        height=120,
+        disabled=not editable,
+        placeholder=(
+            "Example: No new safety concerns were identified during the reporting period; "
+            "the benefit-risk profile remains unchanged."
+        ),
+    )
+
+    if st.button("Generate Draft for 4. Conclusion", key="btn_conclusion", disabled=not editable):
+        with st.spinner("Generating Conclusion..."):
+            conclusion_context = f"""
+Product Name: {context["product_name"]}
+Reporting Interval Start: {context["interval_start"]}
+Reporting Interval End: {context["interval_end"]}
+"""
+            st.session_state["draft_conclusion"] = generate_ai_draft(
+                client=client,
+                section_title="4. Conclusion",
+                section_purpose=(
+                    "Provide the overall safety conclusion and state whether the product "
+                    "safety profile remains unchanged or if further action is planned."
+                ),
+                source_data=conclusion_context,
+                comments=comments,
+                product_name=context["product_name"],
+                interval_start=context["interval_start"],
+                interval_end=context["interval_end"],
+            )
+
+    st.text_area(
+        "Draft Output for 4. Conclusion",
+        key="draft_conclusion",
+        height=220,
+        disabled=not editable,
+    )
+
+
 def render_standard_ai_section(section: dict, context: dict, client, editable: bool):
+    source_file = st.file_uploader(
+        f"Upload Source File for {section['title']} (optional)",
+        type=["pdf", "docx", "txt"],
+        key=f"source_file_{section['id']}",
+        disabled=not editable,
+    )
+
+    uploaded_source_text = extract_uploaded_source_text(
+        source_file,
+        f"Source file for {section['title']}",
+    )
+
     source_data = st.text_area(
         f"Source Data for {section['title']}",
         key=f"source_{section['id']}",
@@ -1215,11 +1322,18 @@ def render_standard_ai_section(section: dict, context: dict, client, editable: b
         disabled=not editable,
     ):
         with st.spinner("Generating AI draft..."):
+            combined_source_data = source_data
+            if uploaded_source_text:
+                combined_source_data = (
+                    f"{source_data}\n\nUploaded source file text:\n{uploaded_source_text[:12000]}"
+                    if source_data
+                    else uploaded_source_text[:12000]
+                )
             st.session_state[f"draft_{section['id']}"] = generate_ai_draft(
                 client=client,
                 section_title=section["title"],
                 section_purpose=section["purpose"],
-                source_data=source_data,
+                source_data=combined_source_data,
                 comments=comments,
                 product_name=context["product_name"],
                 interval_start=context["interval_start"],
@@ -1255,6 +1369,8 @@ def render_pader_sections(context: dict, approval_context: dict, client, editabl
                 render_section_2(context, client, editable)
             elif section["id"] == "actions_taken":
                 render_actions_taken(context, client, editable)
+            elif section["id"] == "conclusion":
+                render_conclusion(context, client, editable)
             else:
                 render_standard_ai_section(section, context, client, editable)
 
@@ -1262,9 +1378,13 @@ def render_pader_sections(context: dict, approval_context: dict, client, editabl
 
 
 def render_assembly_and_export(context: dict, pader_sections: list[dict], editable: bool):
-    st.header("Step 4: Assemble Full Report")
+    st.header("Step 4: Generate Full PADER Report")
+    st.caption(
+        "Generate a complete draft from the current section outputs. "
+        "Authors can still edit and regenerate while the report is in an editable workflow state."
+    )
 
-    if st.button("Assemble Full PADER Report", disabled=not editable):
+    if st.button("Generate / Refresh Full PADER Report", disabled=not editable):
         st.session_state["full_pader_report"] = assemble_full_report(
             product_name=context["product_name"],
             interval_start=context["interval_start"],
@@ -1273,6 +1393,7 @@ def render_assembly_and_export(context: dict, pader_sections: list[dict], editab
             sections=pader_sections,
             drafts=get_drafts_for_sections(pader_sections),
         )
+        st.success("Full PADER report draft generated.")
 
     st.text_area(
         "Full PADER Report Output",
@@ -1280,6 +1401,18 @@ def render_assembly_and_export(context: dict, pader_sections: list[dict], editab
         height=600,
         disabled=not editable,
     )
+
+    full_report_text = st.session_state.get("full_pader_report", "")
+    if full_report_text:
+        draft_docx = export_report_to_word(full_report_text)
+        st.download_button(
+            label="Download Draft PADER Report as Word",
+            data=draft_docx,
+            file_name="Draft_PADER_Report.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+    else:
+        st.info("Generate the full PADER report to preview and download the draft.")
 
 
 def render_export():
