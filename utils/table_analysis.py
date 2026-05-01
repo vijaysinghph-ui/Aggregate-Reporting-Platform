@@ -200,6 +200,41 @@ def summarize_listedness(value) -> str:
     return compact_text(value, max_chars=80)
 
 
+def summarize_seriousness(value) -> str:
+    text = compact_text(value, max_chars=300).lower()
+    if not text:
+        return ""
+
+    if "non-serious" in text or "non serious" in text:
+        return "Non-serious"
+    if re.search(r"\bserious\b", text) or text in {"yes", "y", "true", "1"}:
+        return "Serious"
+    if text in {"no", "n", "false", "0"}:
+        return "Non-serious"
+    return ""
+
+
+def summarize_causality(value) -> str:
+    text = compact_text(value, max_chars=500)
+    lower_text = text.lower()
+    if not text:
+        return ""
+
+    if "unlisted" in lower_text or "listed" in lower_text:
+        return ""
+    if "not related" in lower_text or "unrelated" in lower_text:
+        return "Not related"
+    if "related" in lower_text or "causal" in lower_text:
+        return "Related"
+    if "probable" in lower_text:
+        return "Probable"
+    if "possible" in lower_text:
+        return "Possible"
+    if len(text) > 80:
+        return ""
+    return text
+
+
 def display_value(value: str, fallback: str = "Not available") -> str:
     return value if value else fallback
 
@@ -226,11 +261,15 @@ def markdown_case_table(df: pd.DataFrame, columns: dict[str, str], max_rows: int
 
     for _, row in df.head(max_rows).iterrows():
         evaluation_parts = [
-            table_value(row, columns.get("seriousness"), max_chars=60),
+            summarize_seriousness(row.get(columns.get("seriousness"), ""))
+            if columns.get("seriousness")
+            else "",
             summarize_listedness(row.get(columns.get("listedness"), ""))
             if columns.get("listedness")
             else "",
-            table_value(row, columns.get("causality"), max_chars=80),
+            summarize_causality(row.get(columns.get("causality"), ""))
+            if columns.get("causality")
+            else "",
             table_value(row, columns.get("outcome"), max_chars=60),
         ]
         evaluation = "; ".join([part for part in evaluation_parts if part])
