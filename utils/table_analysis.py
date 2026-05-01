@@ -162,6 +162,48 @@ def compact_text(value, max_chars: int = 220) -> str:
     return text[: max_chars - 3].rstrip() + "..."
 
 
+def normalize_event_text(value, max_chars: int = 180) -> str:
+    text = compact_text(value, max_chars=1000)
+    if not text:
+        return ""
+
+    bracketed_terms = re.findall(r"\[([^\]]+)\]", text)
+    if bracketed_terms:
+        cleaned_terms = []
+        for term in bracketed_terms:
+            cleaned = compact_text(term.replace("_", " "), max_chars=80).title()
+            if cleaned and cleaned not in cleaned_terms:
+                cleaned_terms.append(cleaned)
+        if cleaned_terms:
+            return compact_text("; ".join(cleaned_terms), max_chars=max_chars)
+
+    return compact_text(text, max_chars=max_chars)
+
+
+def summarize_listedness(value) -> str:
+    text = compact_text(value, max_chars=1000).lower()
+    if not text:
+        return ""
+
+    has_unlisted = bool(re.search(r"\bunlisted\b", text))
+    has_listed = bool(re.search(r"\blisted\b", text))
+    has_unknown = bool(re.search(r"\bunknown\b", text))
+
+    if has_unlisted and has_listed:
+        return "Mixed listedness"
+    if has_unlisted:
+        return "Unlisted"
+    if has_listed:
+        return "Listed"
+    if has_unknown:
+        return "Unknown listedness"
+    return compact_text(value, max_chars=80)
+
+
+def display_value(value: str, fallback: str = "Not available") -> str:
+    return value if value else fallback
+
+
 def table_value(row, column, max_chars: int = 220) -> str:
     if not column:
         return ""
@@ -185,17 +227,19 @@ def markdown_case_table(df: pd.DataFrame, columns: dict[str, str], max_rows: int
     for _, row in df.head(max_rows).iterrows():
         evaluation_parts = [
             table_value(row, columns.get("seriousness"), max_chars=60),
-            table_value(row, columns.get("listedness"), max_chars=80),
+            summarize_listedness(row.get(columns.get("listedness"), ""))
+            if columns.get("listedness")
+            else "",
             table_value(row, columns.get("causality"), max_chars=80),
             table_value(row, columns.get("outcome"), max_chars=60),
         ]
         evaluation = "; ".join([part for part in evaluation_parts if part])
         values = [
-            table_value(row, columns.get("case_id"), max_chars=40),
-            table_value(row, columns.get("event"), max_chars=180),
-            table_value(row, columns.get("date_submitted"), max_chars=40),
-            table_value(row, columns.get("report_type"), max_chars=60),
-            compact_text(evaluation, max_chars=220),
+            display_value(table_value(row, columns.get("case_id"), max_chars=40)),
+            display_value(normalize_event_text(row.get(columns.get("event"), ""))),
+            display_value(table_value(row, columns.get("date_submitted"), max_chars=40)),
+            display_value(table_value(row, columns.get("report_type"), max_chars=60)),
+            display_value(compact_text(evaluation, max_chars=160)),
         ]
         lines.append("| " + " | ".join(values) + " |")
 
