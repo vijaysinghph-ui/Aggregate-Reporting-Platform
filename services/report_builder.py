@@ -229,7 +229,13 @@ def parse_toc_text(text: str) -> list[str]:
     lines = []
     for raw_line in text.splitlines():
         line = raw_line.strip()
-        if not line or line == "Cover Page":
+        if (
+            not line
+            or line == "Cover Page"
+            or line.startswith("[No draft available")
+            or set(line) <= {"-"}
+            or set(line) <= {"="}
+        ):
             continue
         lines.append(line)
     return lines
